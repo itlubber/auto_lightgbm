@@ -11,32 +11,34 @@ import numpy as np
 from toad.stats import *
 from sklearn.metrics import *
 
+from .logger import logger
 
-def solveIV(dev_data, var_names, dep, iv_only=True,cpu_cores=1):
+
+def solveIV(dev_data, var_names, dep, iv_only=True, cpu_cores=1):
     """
     调用solveIV函数，计算IV（dataframe）
     """
-    IV = toad.quality(dev_data[var_names + [dep]], target=dep, iv_only=iv_only,cpu_cores=cpu_cores)
+    IV = toad.quality(dev_data[var_names + [dep]], target=dep, iv_only=iv_only, cpu_cores=cpu_cores)
     combiner = toad.transform.Combiner()
-    combiner.fit(dev_data[var_names + [dep]], dev_data[dep], method='chi', min_samples=0.05)
+    combiner.fit(dev_data[var_names + [dep]], dev_data[dep], method="chi", min_samples=0.05)
     dev_data_bin = combiner.transform(dev_data[var_names + [dep]])
     WOETransformer = toad.transform.WOETransformer()
     dev_data_woe = WOETransformer.fit_transform(dev_data_bin[var_names + [dep]], dev_data_bin[dep])
-    
+
     lis = []
     for i in IV.index:
         woe_set = set(dev_data_woe[i].map(lambda x: float(x)))
         woe_lis = list(map(abs, woe_set))
         lis.append(np.sum(woe_lis))
-    
-    IV['策略度'] = lis
-    
+
+    IV["策略度"] = lis
+
     return IV
 
 
 def sloveKS(model, X, Y):
     """
-    计算dev和off上的KS值
+    计算dev和oot上的KS值
     """
     Y_predict = model.predict(X)
     nrows = X.shape[0]
@@ -46,7 +48,7 @@ def sloveKS(model, X, Y):
     bad = sum([w for (p, y, w) in ks_lis if y > 0.5])
     good = sum([w for (p, y, w) in ks_lis if y <= 0.5])
     bad_cnt, good_cnt = 0, 0
-    for (p, y, w) in ks_lis:
+    for p, y, w in ks_lis:
         if y > 0.5:
             bad_cnt += w
         else:
@@ -58,7 +60,7 @@ def sloveKS(model, X, Y):
 
 def slovePSI(model, dev_x, val_x):
     """
-    计算off相对于dev的PSI
+    计算oot相对于dev的PSI
     """
     dev_predict_y = model.predict(dev_x)
     dev_nrows = dev_x.shape[0]
@@ -98,16 +100,16 @@ def normall_evl(valid_y, y_pred):
     单类计算各种评价指标
     """
     dct = {}
-    dct['分类准确率为'] = accuracy_score(valid_y, y_pred)
-    dct['宏平均准确率'] = precision_score(valid_y, y_pred, average='macro')
-    dct['微平均准确率'] = precision_score(valid_y, y_pred, average='micro')
+    dct["分类准确率为"] = accuracy_score(valid_y, y_pred)
+    dct["宏平均准确率"] = precision_score(valid_y, y_pred, average="macro")
+    dct["微平均准确率"] = precision_score(valid_y, y_pred, average="micro")
 
-    dct['宏平均召回率为'] = recall_score(valid_y, y_pred, average='macro')
-    dct['微平均召回率为'] = recall_score(valid_y, y_pred, average='micro')
+    dct["宏平均召回率为"] = recall_score(valid_y, y_pred, average="macro")
+    dct["微平均召回率为"] = recall_score(valid_y, y_pred, average="micro")
 
-    dct['宏平均f1值为'] = f1_score(valid_y, y_pred, average='macro')
-    dct['微平均f1值为'] = f1_score(valid_y, y_pred, average='micro')
-    dct['lift值为'] = confusion_matrix(valid_y, y_pred)
+    dct["宏平均f1值为"] = f1_score(valid_y, y_pred, average="macro")
+    dct["微平均f1值为"] = f1_score(valid_y, y_pred, average="micro")
+    dct["lift值为"] = confusion_matrix(valid_y, y_pred)
     return dct
 
 
@@ -117,4 +119,4 @@ def evl_all(df, dep, pred_class):
     """
     for i in set(df[pred_class]):
         y_label = df[dep]
-        print(i, normall_evl(y_label, pred_class))
+        logger.info(f"{i}\t{normall_evl(y_label, pred_class)}")
