@@ -17,8 +17,8 @@ import toad
 import lightgbm as lgb
 
 from .utils.logger import logger
-from .utils.eva_utils import solveIV, sloveKS, slovePSI
-from .utils.train_utils import feature_select, auto_choose_params, auto_delete_vars
+from .utils.metrics import solveIV, sloveKS, slovePSI
+from .utils.methods import feature_select, auto_choose_params, auto_delete_vars
 
 
 class auto_lightgbm(object):

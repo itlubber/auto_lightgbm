@@ -16,7 +16,7 @@ from hyperopt import hp
 from bayes_opt import BayesianOptimization
 
 from .logger import logger
-from .eva_utils import sloveKS, slovePSI
+from .metrics import sloveKS, slovePSI
 
 
 def feature_select(datasets, model, var_names, dep, select_type="shap", imp_threhold=0, corr_threhold=0.7, psi_threhold=0.1):
