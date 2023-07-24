@@ -4,14 +4,17 @@ Created on Wed Aug 12 21:39:11 2020
 
 @author: meizihang
 """
-import sys
-sys.path.append('./automl')
-from automl.aml_main import auto_lightgbm
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.datasets import make_classification
+
 import warnings
+
 warnings.filterwarnings('ignore')
+
+import pandas as pd
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+
+from automl.aml_main import auto_lightgbm
+
 
 X, y = make_classification(n_samples=1000,n_features=30,n_classes=2,random_state=328)
 data = pd.DataFrame(X)

@@ -5,24 +5,23 @@ Created on Tue Aug 11 22:07:12 2020
 @author: meizihang
 """
 
-from tqdm import tqdm
-import numpy as np
+import toad
 import shap
+import numpy as np
 import pandas as pd
 import lightgbm as lgb
-import toad
+from tqdm import tqdm
 
-import hyperopt
 from hyperopt import hp
 from bayes_opt import BayesianOptimization
 
-from numpy.random import RandomState
-from sklearn.model_selection import train_test_split
 from .eva_utils import sloveKS, slovePSI
 
 
-# 特征选择
 def feature_select(datasets, model, var_names, dep, select_type='shap', imp_threhold=0, corr_threhold=0.7, psi_threhold=0.1):
+    """
+    特征选择
+    """
     dev_data = datasets.get("dev", "")
     off_data = datasets.get("off", "")
 
@@ -54,6 +53,7 @@ def feature_select(datasets, model, var_names, dep, select_type='shap', imp_thre
         print('-'*50)
         var_names = keep_list.copy()
 
+    # 相关性筛选特征
     if corr_threhold:
         dev_slct, drop_lst = toad.selection.select(dev_data[var_names], dev_data[dep], empty=1,
                                                    iv=0, corr=corr_threhold, return_drop=True)
@@ -66,7 +66,8 @@ def feature_select(datasets, model, var_names, dep, select_type='shap', imp_thre
                 var_names.remove(i)
             except:
                 continue
-
+    
+    # PSI筛选特征
     if psi_threhold:
         psi_df = toad.metrics.PSI(dev_data[var_names], off_data[var_names]).sort_values(0)
         psi_df = psi_df.reset_index()
@@ -79,8 +80,11 @@ def feature_select(datasets, model, var_names, dep, select_type='shap', imp_thre
         var_names = [i for i in var_names if i in psi]
     return var_names
 
-# 自动化调参的目标函数
+
 def target_value(target, devks, offks, params_weight):
+    """
+    自动化调参的目标函数
+    """
     if target == "offks":
         return offks
     elif target == "avg":
@@ -93,9 +97,11 @@ def target_value(target, devks, offks, params_weight):
         return devks
 
 
-# 判断调参后目标函数是否有优化
 def check_params(dev_data, off_data, var_names, dep, params,
                  param, train_number, step, target, targetks, params_weight):
+    """
+    判断调参后目标函数是否有优化
+    """
     while True:
         try:
             if params[param] + step > 0:
@@ -122,9 +128,9 @@ def check_params(dev_data, off_data, var_names, dep, params,
         params[param] -= step
     return params, targetks, train_number
 
-# 从祖传参数出发，开始找最佳参数
+
 def auto_choose_params(datasets, var_names, dep, min_data, params_weight, early_stopping_rounds=10, params={}, target="weight"):
-    """
+    """从祖传参数出发，开始找最佳参数
     :param target:
             "offks": offks最大化;
             "minus": 1-abs(devks-offks) 最大化;
@@ -244,8 +250,11 @@ def auto_choose_params(datasets, var_names, dep, min_data, params_weight, early_
     print("Best params: ", params)
     return params
 
-# 逐个特征剔除，判断KS是否有降低，尽可能减少模型中的变量个数
+
 def auto_delete_vars(datasets, var_names, dep, min_data, early_stopping_rounds, params={}):
+    """
+    逐个特征剔除，判断KS是否有降低，尽可能减少模型中的变量个数
+    """
     print("开始逐步删除特征 \t")
     dev_data = datasets.get("dev", "")
     off_data = datasets.get("off", "")
@@ -303,47 +312,3 @@ def auto_delete_vars(datasets, var_names, dep, min_data, early_stopping_rounds, 
           "逐步保留特征个数：", len(var_names))
 
     return del_list, var_names
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

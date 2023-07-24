@@ -4,27 +4,22 @@ Created on Tue Aug 11 22:03:09 2020
 
 @author: meizihang
 """
-
-import pandas as pd
-import numpy as np
-import pydotplus
-from IPython.display import Image
-from sklearn.externals.six import StringIO
-import os
-from sklearn import tree
-
 import warnings
-import pandas as pd
-import toad
-from .utils.Decision_utils import DTR_TO_SQL
-from .utils.eva_utils import solveIV
-from .utils.train_utils import feature_select, auto_choose_params, auto_delete_vars
-from .utils.eva_utils import sloveKS, slovePSI
-import lightgbm as lgb
 
 warnings.filterwarnings('ignore')
 
-#lightgbm自动建模
+import os
+import numpy as np
+import pandas as pd
+
+import toad
+import lightgbm as lgb
+
+from .utils.eva_utils import solveIV
+from .utils.train_utils import feature_select, auto_choose_params, auto_delete_vars
+from .utils.eva_utils import sloveKS, slovePSI
+
+
 class auto_lightgbm(object):
     def __init__(self, datasets, dep, var_names, uid='Zihang.Mei', params={}, early_stopping_rounds=10 ,fill_nan_with=-1):
 
