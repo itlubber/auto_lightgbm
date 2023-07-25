@@ -13,6 +13,7 @@ import pandas as pd
 from sklearn.datasets import make_classification
 from sklearn.model_selection import train_test_split
 
+from scorecardpipeline import *
 from automl import auto_lightgbm
 
 
@@ -21,12 +22,18 @@ data = pd.DataFrame(X)
 data.columns = [f"f{i}" for i in range(len(data.columns))]
 data['target'] = y
 
-dev, oot = train_test_split(data, test_size=0.3, random_state=328)
+target = "target"
+seed = 2349
+num_threads = 1
+test_size = 0.25
+imp_threhold = 1e-4
+corr_threhold = 0.4
+early_stopping_rounds = 5
 
 
-lgb_base = auto_lightgbm({"dev": dev, "oot": oot}, params={'num_threads': 1}, early_stopping_rounds=10)
+dev, oot = train_test_split(data, test_size=test_size, random_state=seed, stratify=data[target])
 
-#训练模型
+lgb_base = auto_lightgbm({"dev": dev, "oot": oot}, params={'num_threads': num_threads}, early_stopping_rounds=early_stopping_rounds)
 model, new_var_names = lgb_base.train(
                                         select_feature=True, # 特征筛选
                                         select_type='shap',  # 特征筛选指标
@@ -37,3 +44,9 @@ model, new_var_names = lgb_base.train(
                                         target='weight',     # 参数搜索目标函数
                                         params_weight=0.2    # weight目标函数权重
                                     )
+
+logistic = ITLubberLogisticRegression(target=target, class_weight={1: 0.9, 0: 0.1}, C=10, max_iter=50)
+logistic.fit(data[new_var_names + [target]])
+summary = logistic.summary()
+
+print(summary)
