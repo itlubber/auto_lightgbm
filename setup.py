@@ -1,46 +1,57 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Aug 12 21:40:17 2020
-
-@author: meizihang
-"""
-
-from setuptools import setup, Extension, find_packages
-from setuptools.command.build_ext import build_ext
-import sys
-import setuptools
 import os
+import re
+from setuptools import setup, find_packages, Extension
 
-__version__ = '1.0.1'
-__author__ = 'Zihang.Mei'
+
+NAME = 'itlubber_automl'
+
+
+def get_version():
+    with open(f"{NAME}/__init__.py", "r", encoding="utf8") as f:
+        return re.search(r'__version__ = "(.*?)"', f.read()).group(1)
+
+
+def get_requirements(stage = None):
+    file_name = 'requirements'
+
+    if stage is not None:
+        file_name = f"{file_name}-{stage}"
+    
+    requirements = []
+    with open(f"{file_name}.txt", 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('-'):
+                continue
+            
+            requirements.append(line)
+    
+    return requirements
+
 
 setup(
-    name='autoML',
-    version=__version__,
-    packages=find_packages(),
-    install_requires=[
-        'pip==20.2.4',
-        'IPython==7.8.0'
-        'numpy==1.17.4',
-        'shap==0.32.1',
-        'toad=0.0.64',
-        'pandas==0.25.3',
-        'scikit-learn==0.22',
-        'lightgbm==2.2.3',
-        'xgboost==0.90'
-    ],
-    url='',
-    author=__author__,
-    classifiers=[
-        'Programming Language :: Python :: 3.5',
+    name = NAME,
+    version = get_version(),
+    description = 'https://zhuanlan.zhihu.com/p/447307569',
+    long_description = open('README.md', encoding = 'utf-8').read(),
+    long_description_content_type = 'text/markdown',
+    url = 'https://github.com/itlubber/auto_lightgbm',
+    author = 'itlubber',
+    author_email = 'itlubber@qq.com',
+    packages = find_packages(),
+    include_package_data = True,
+    python_requires = '>=3.6',
+    install_requires = get_requirements(),
+    license = 'MIT',
+    classifiers = [
+        'Operating System :: POSIX',
+        'Operating System :: Microsoft :: Windows',
+        'Operating System :: MacOS :: MacOS X',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
     ],
-    include_package_data=True,
-    package_data={'': ['*.py', '*.txt', '*.csv']},
-    zip_safe=False,
-    platform='any',
-
-    descripition='Automated Machine Learning for VIVO Finance Data Mining Group',
-    long_descripition=__doc__
 )
