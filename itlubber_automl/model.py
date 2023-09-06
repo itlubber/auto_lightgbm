@@ -130,3 +130,56 @@ class auto_lightgbm(object):
         logger.info("AutoML建模完成")
 
         return model, var_names
+
+
+def auto_logistic(data, target="target", params={}, early_stopping_rounds=10, importance=1e-4, corr=0.4, psi=0.5, test_size=0.25, seed=None, max_rounds=128, mertic="weight", balance_weight=0.2, C=1., class_weight=None, max_iter=128, **kwargs):
+    del_vars = []
+
+    dev, oot = train_test_split(data, test_size=test_size, random_state=seed, stratify=data[target])
+
+    for i in range(max_rounds):
+        if len(del_vars) < len(data.columns) - 1:
+            lgb_base = auto_lightgbm({"dev": dev.drop(columns=del_vars), "oot": oot.drop(columns=del_vars)}, params=params, early_stopping_rounds=early_stopping_rounds)
+            model, new_var_names = lgb_base.train(
+                                                    select_feature=True,
+                                                    select_type='shap',
+                                                    single_delete=True,
+                                                    imp_threhold=importance,
+                                                    corr_threhold=corr,
+                                                    psi_threhold=psi,
+                                                    target=mertic,
+                                                    params_weight=balance_weight,
+                                                )
+            
+            logistic = ITLubberLogisticRegression(target=target, class_weight=class_weight, C=C, max_iter=max_iter, **kwargs)
+            logistic.fit(data[new_var_names + [target]])
+            summary = logistic.summary()
+
+            if len(summary[summary["Coef."] < 0]) > 0:
+                del_vars.append(summary[summary["Coef."] < 0]["P>|z|"].idxmax())
+            else:
+                return logistic
+        else:
+            raise "自动逻辑回归建模失败"
+
+
+if __name__ == "__main__":
+    import warnings
+
+    warnings.filterwarnings('ignore')
+
+    import pandas as pd
+    from sklearn.datasets import make_classification
+    from sklearn.model_selection import train_test_split
+
+    from scorecardpipeline import *
+    
+    
+    x, y = make_classification(n_samples=1000,n_features=30,n_classes=2,random_state=328)
+    data = pd.DataFrame(x)
+    data.columns = [f"f{i}" for i in range(len(data.columns))]
+    data['target'] = y
+    
+    logistic = auto_logistic(data, target="target", params={}, early_stopping_rounds=10, importance=1e-4, corr=0.4, psi=0.5, test_size=0.25, seed=348, max_rounds=128, mertic="weight", balance_weight=0.2, C=10, class_weight=None, max_iter=128)
+    
+    print(logistic.summary())

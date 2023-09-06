@@ -6,7 +6,7 @@
 """
 
 from .utils.logger import logger
-from .model import auto_lightgbm
+from .model import auto_lightgbm, auto_logistic
 
-__version__ = "0.1.1"
-__all__ = ("__version__", "auto_lightgbm", "logger")
+__version__ = "0.1.2"
+__all__ = ("__version__", "auto_lightgbm", "auto_logistic", "logger")
