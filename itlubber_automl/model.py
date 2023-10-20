@@ -15,6 +15,7 @@ import pandas as pd
 
 import toad
 import lightgbm as lgb
+from scorecardpipeline import ITLubberLogisticRegression
 
 from .utils.logger import logger
 from .utils.metrics import solveIV, sloveKS, slovePSI
@@ -171,8 +172,6 @@ if __name__ == "__main__":
     import pandas as pd
     from sklearn.datasets import make_classification
     from sklearn.model_selection import train_test_split
-
-    from scorecardpipeline import *
     
     
     x, y = make_classification(n_samples=1000,n_features=30,n_classes=2,random_state=328)
