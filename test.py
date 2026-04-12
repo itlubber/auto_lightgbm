@@ -13,7 +13,7 @@ import pandas as pd
 from sklearn.datasets import make_classification
 from sklearn.model_selection import train_test_split
 
-from scorecardpipeline import *
+from hscredit.core.models.classical.logistic_regression import LogisticRegression
 from automl import auto_lightgbm
 
 
@@ -45,7 +45,7 @@ model, new_var_names = lgb_base.train(
                                         params_weight=0.2    # weight目标函数权重
                                     )
 
-logistic = ITLubberLogisticRegression(target=target, class_weight={1: 0.9, 0: 0.1}, C=10, max_iter=50)
+logistic = LogisticRegression(target=target, class_weight={1: 0.9, 0: 0.1}, C=10, max_iter=50)
 logistic.fit(data[new_var_names + [target]])
 summary = logistic.summary()
 

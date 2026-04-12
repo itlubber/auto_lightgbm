@@ -15,7 +15,7 @@ import pandas as pd
 
 import toad
 import lightgbm as lgb
-from scorecardpipeline import ITLubberLogisticRegression
+from hscredit.core.models.classical.logistic_regression import LogisticRegression
 
 from .utils.logger import logger
 from .utils.metrics import solveIV, sloveKS, slovePSI
@@ -152,7 +152,7 @@ def auto_logistic(data, target="target", params={}, early_stopping_rounds=10, im
                                                     params_weight=balance_weight,
                                                 )
             
-            logistic = ITLubberLogisticRegression(target=target, class_weight=class_weight, C=C, max_iter=max_iter, **kwargs)
+            logistic = LogisticRegression(target=target, class_weight=class_weight, C=C, max_iter=max_iter, **kwargs)
             logistic.fit(data[new_var_names + [target]])
             summary = logistic.summary()
 
