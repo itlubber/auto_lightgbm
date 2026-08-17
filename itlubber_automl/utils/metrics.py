@@ -6,33 +6,35 @@ Created on Wed Aug 12 21:41:55 2020
 """
 
 import math
-import toad
 import numpy as np
-from toad.stats import *
+import pandas as pd
 from sklearn.metrics import *
+
+from hscredit.core.metrics.classification import ks
+from hscredit.core.metrics.feature import iv_table
+from hscredit.core.metrics.stability import psi
 
 from .logger import logger
 
 
 def solveIV(dev_data, var_names, dep, iv_only=True, cpu_cores=1):
     """
-    调用solveIV函数，计算IV（dataframe）
+    调用 hscredit 计算IV（dataframe）
     """
-    IV = toad.quality(dev_data[var_names + [dep]], target=dep, iv_only=iv_only, cpu_cores=cpu_cores)
-    combiner = toad.transform.Combiner()
-    combiner.fit(dev_data[var_names + [dep]], dev_data[dep], method="chi", min_samples=0.05)
-    dev_data_bin = combiner.transform(dev_data[var_names + [dep]])
-    WOETransformer = toad.transform.WOETransformer()
-    dev_data_woe = WOETransformer.fit_transform(dev_data_bin[var_names + [dep]], dev_data_bin[dep])
+    records = []
 
-    lis = []
-    for i in IV.index:
-        woe_set = set(dev_data_woe[i].map(lambda x: float(x)))
-        woe_lis = list(map(abs, woe_set))
-        lis.append(np.sum(woe_lis))
+    for feature in var_names:
+        try:
+            table = iv_table(dev_data[dep], dev_data[feature])
+            feature_iv = float(table["分档IV值"].sum()) if "分档IV值" in table.columns else np.nan
+            strategy_degree = float(table["分档WOE值"].abs().sum()) if "分档WOE值" in table.columns else np.nan
+        except Exception:
+            feature_iv = np.nan
+            strategy_degree = np.nan
 
-    IV["策略度"] = lis
+        records.append({"特征": feature, "IV": feature_iv, "策略度": strategy_degree})
 
+    IV = pd.DataFrame(records).set_index("特征")
     return IV
 
 
@@ -40,45 +42,14 @@ def sloveKS(model, X, Y):
     """
     计算dev和oot上的KS值
     """
-    Y_predict = model.predict(X)
-    nrows = X.shape[0]
-    lis = [(Y_predict[i], Y.values[i], 1) for i in range(nrows)]
-    ks_lis = sorted(lis, key=lambda x: x[0], reverse=True)
-    KS = list()
-    bad = sum([w for (p, y, w) in ks_lis if y > 0.5])
-    good = sum([w for (p, y, w) in ks_lis if y <= 0.5])
-    bad_cnt, good_cnt = 0, 0
-    for p, y, w in ks_lis:
-        if y > 0.5:
-            bad_cnt += w
-        else:
-            good_cnt += w
-        ks = math.fabs((bad_cnt / bad) - (good_cnt / good))
-        KS.append(ks)
-    return max(KS)
+    return ks(Y, model.predict(X))
 
 
 def slovePSI(model, dev_x, val_x):
     """
     计算oot相对于dev的PSI
     """
-    dev_predict_y = model.predict(dev_x)
-    dev_nrows = dev_x.shape[0]
-    dev_predict_y.sort()
-    cutpoint = [-100] + [dev_predict_y[int(dev_nrows / 10 * i)] for i in range(1, 10)] + [100]
-    cutpoint = list(set(cutpoint))
-    val_predict_y = model.predict(val_x)
-    val_nrows = val_x.shape[0]
-    PSI = 0
-    for i in range(len(cutpoint) - 1):
-        start_point, end_point = cutpoint[i], cutpoint[i + 1]
-        dev_cnt = [p for p in dev_predict_y if start_point <= p < end_point]
-        dev_ratio = len(dev_cnt) / dev_nrows + 1e-10
-        val_cnt = [p for p in val_predict_y if start_point <= p < end_point]
-        val_ratio = len(val_cnt) / val_nrows + 1e-10
-        psi = (dev_ratio - val_ratio) * math.log(dev_ratio / val_ratio)
-        PSI += psi
-    return PSI
+    return psi(model.predict(dev_x), model.predict(val_x))
 
 
 def confusion_matrix(y, pred):

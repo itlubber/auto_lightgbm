@@ -5,18 +5,68 @@ Created on Tue Aug 11 22:07:12 2020
 @author: meizihang
 """
 
-import toad
-import shap
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from tqdm import tqdm
 
-from hyperopt import hp
-from bayes_opt import BayesianOptimization
+try:
+    import shap
+except ImportError:
+    shap = None
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable, *args, **kwargs):
+        return iterable
+
+try:
+    from hyperopt import hp
+except ImportError:
+    hp = None
+
+try:
+    from bayes_opt import BayesianOptimization
+except ImportError:
+    BayesianOptimization = None
+from hscredit.core.metrics import batch_psi
+from hscredit.core.selectors import ScorecardFeatureSelection
 
 from .logger import logger
 from .metrics import sloveKS, slovePSI
+
+
+def _normalize_lgb_params(params):
+    normalized = dict(params)
+    for key in ("feature_fraction", "bagging_fraction"):
+        if key in normalized:
+            try:
+                value = float(normalized[key])
+            except (TypeError, ValueError):
+                continue
+            normalized[key] = max(min(value, 1.0), 1e-6)
+    return normalized
+
+
+def _train_lgbm(params, train_set, valid_set=None, early_stopping_rounds=None):
+    train_params = _normalize_lgb_params(params)
+    num_boost_round = int(train_params.pop("num_boost_round", 100))
+    callbacks = []
+
+    if early_stopping_rounds:
+        callbacks.append(lgb.early_stopping(stopping_rounds=early_stopping_rounds, verbose=False))
+
+    callbacks.append(lgb.log_evaluation(period=0))
+
+    valid_sets = [valid_set] if valid_set is not None else None
+
+    return lgb.train(
+        params=train_params,
+        train_set=train_set,
+        valid_sets=valid_sets,
+        num_boost_round=num_boost_round,
+        callbacks=callbacks,
+    )
 
 
 def feature_select(datasets, model, var_names, dep, select_type="shap", imp_threhold=0, corr_threhold=0.7, psi_threhold=0.1):
@@ -28,17 +78,35 @@ def feature_select(datasets, model, var_names, dep, select_type="shap", imp_thre
 
     # shap筛选特征
     if select_type == "shap":
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(dev_data[var_names])
-        importance = dict(zip(var_names, np.mean([i for i in map(abs, shap_values[1])], axis=0)))
-        keep_list = []
-        for key, values in importance.items():
-            if values > imp_threhold:
-                keep_list.append(key)
-        logger.info(f"Shap阈值 {imp_threhold}")
-        logger.info(f"shap删除特征个数：{len(var_names) - len(keep_list)}, shap保留特征个数：{len(keep_list)}")
-        logger.info("-" * 50)
-        var_names = keep_list.copy()
+        if shap is None:
+            logger.info("Shap未安装，跳过shap筛选")
+            logger.info("-" * 50)
+        else:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(dev_data[var_names])
+            if isinstance(shap_values, list):
+                shap_array = np.asarray(shap_values[1] if len(shap_values) > 1 else shap_values[0])
+            else:
+                shap_array = np.asarray(shap_values)
+
+            if shap_array.ndim == 1:
+                shap_importance = np.abs(shap_array)
+            else:
+                shap_importance = np.mean(np.abs(shap_array), axis=0)
+
+            importance = dict(zip(var_names, shap_importance))
+            keep_list = []
+            for key, values in importance.items():
+                if values > imp_threhold:
+                    keep_list.append(key)
+            if keep_list:
+                logger.info(f"Shap阈值 {imp_threhold}")
+                logger.info(f"shap删除特征个数：{len(var_names) - len(keep_list)}, shap保留特征个数：{len(keep_list)}")
+                logger.info("-" * 50)
+                var_names = keep_list.copy()
+            else:
+                logger.info(f"Shap阈值 {imp_threhold}, 但未保留任何特征，跳过该阶段")
+                logger.info("-" * 50)
 
     # feature_importance筛选特征
     elif select_type == "feature_importance":
@@ -47,33 +115,47 @@ def feature_select(datasets, model, var_names, dep, select_type="shap", imp_thre
         for key, values in importance.items():
             if values > imp_threhold:
                 keep_list.append(key)
-        logger.info(f"feature_importance阈值 {imp_threhold}")
-        logger.info(f"feature_importance删除特征个数：{len(var_names) - len(keep_list)}, feature_importance保留特征个数：{len(keep_list)}")
-        logger.info("-" * 50)
-        var_names = keep_list.copy()
+        if keep_list:
+            logger.info(f"feature_importance阈值 {imp_threhold}")
+            logger.info(f"feature_importance删除特征个数：{len(var_names) - len(keep_list)}, feature_importance保留特征个数：{len(keep_list)}")
+            logger.info("-" * 50)
+            var_names = keep_list.copy()
+        else:
+            logger.info(f"feature_importance阈值 {imp_threhold}, 但未保留任何特征，跳过该阶段")
+            logger.info("-" * 50)
 
     # 相关性筛选特征
     if corr_threhold:
-        dev_slct, drop_lst = toad.selection.select(dev_data[var_names], dev_data[dep], empty=1, iv=0, corr=corr_threhold, return_drop=True)
-        logger.info(f"相关性阈值: {corr_threhold}, 相关性删除特征个数: {len(drop_lst['corr'])}, 相关性保留特征个数: {len(var_names) - len(drop_lst['corr'])}")
-        logger.info("-" * 50)
-        for i in drop_lst["corr"]:
-            try:
-                var_names.remove(i)
-            except:
-                continue
+        selector = ScorecardFeatureSelection(
+            null_threshold=None,
+            iv_threshold=None,
+            corr_threshold=corr_threhold,
+            mode_threshold=None,
+            target=dep,
+        )
+        selector.fit(dev_data[var_names], dev_data[dep])
+        keep_set = set(selector.selected_features_)
+        drop_lst = [name for name in var_names if name not in keep_set]
+        if keep_set:
+            logger.info(f"相关性阈值: {corr_threhold}, 相关性删除特征个数: {len(drop_lst)}, 相关性保留特征个数: {len(keep_set)}")
+            logger.info("-" * 50)
+            var_names = [name for name in var_names if name in keep_set]
+        else:
+            logger.info(f"相关性阈值: {corr_threhold}, 但未保留任何特征，跳过该阶段")
+            logger.info("-" * 50)
 
     # PSI筛选特征
     if psi_threhold:
-        # import pdb; pdb.set_trace()
-        psi_df = toad.metrics.PSI(dev_data[var_names], oot_data[var_names]).sort_values(0)
-        psi_df = psi_df.reset_index()
-        psi_df = psi_df.rename(columns={"index": "feature", 0: "psi"})
-        psi = list(psi_df[psi_df.psi < psi_threhold].feature)
-        logger.info(f"PSI阈值 {psi_threhold}")
-        logger.info(f"PSI删除特征个数: {len(var_names) - len(psi)}, PSI保留特征个数: {len(psi)}")
-        logger.info("-" * 50)
-        var_names = [i for i in var_names if i in psi]
+        psi_df = batch_psi(dev_data[var_names], oot_data[var_names], features=var_names)
+        psi = psi_df.loc[psi_df["PSI"] < psi_threhold, "特征"].tolist()
+        if psi:
+            logger.info(f"PSI阈值 {psi_threhold}")
+            logger.info(f"PSI删除特征个数: {len(var_names) - len(psi)}, PSI保留特征个数: {len(psi)}")
+            logger.info("-" * 50)
+            var_names = [i for i in var_names if i in psi]
+        else:
+            logger.info(f"PSI阈值 {psi_threhold}, 但未保留任何特征，跳过该阶段")
+            logger.info("-" * 50)
     return var_names
 
 
@@ -99,16 +181,21 @@ def check_params(dev_data, oot_data, var_names, dep, params, param, train_number
     """
     while True:
         try:
-            if params[param] + step > 0:
-                params[param] += step
-                model = lgb.train(params=params, verbose_eval=False, train_set=lgb.Dataset(dev_data[var_names], dev_data[dep]), valid_sets=lgb.Dataset(oot_data[var_names], oot_data[dep]))
+            candidate = params[param] + step
+            if param in ("feature_fraction", "bagging_fraction"):
+                candidate = max(min(candidate, 1.0), 1e-6)
+            if candidate > 0 and candidate != params[param]:
+                trial_params = dict(params)
+                trial_params[param] = candidate
+                model = _train_lgbm(trial_params, lgb.Dataset(dev_data[var_names], dev_data[dep]), lgb.Dataset(oot_data[var_names], oot_data[dep]))
                 devks = sloveKS(model, dev_data[var_names], dev_data[dep])
                 ootks = sloveKS(model, oot_data[var_names], oot_data[dep])
                 train_number += 1
                 targetks_n = target_value(target=target, devks=devks, ootks=ootks, params_weight=params_weight)
                 if targetks < targetks_n:
-                    logger.info("(Good) train_number: %s, devks: %s, ootks: %s, params: %s" % (train_number, devks, ootks, params))
+                    logger.info("(Good) train_number: %s, devks: %s, ootks: %s, params: %s" % (train_number, devks, ootks, trial_params))
                     targetks = targetks_n
+                    params = trial_params
                 else:
                     # logger.info("(Bad) train_number: %s, devks: %s, ootks: %s, params: %s" % (train_number, devks, ootks, params))
                     break
@@ -116,7 +203,6 @@ def check_params(dev_data, oot_data, var_names, dep, params, param, train_number
                 break
         except:
             break
-        params[param] -= step
     return params, targetks, train_number
 
 
@@ -154,6 +240,9 @@ def auto_choose_params(datasets, var_names, dep, min_data, params_weight, early_
     }
 
     if target == "bayes":
+        if hp is None or BayesianOptimization is None:
+            raise ImportError("bayes_opt 或 hyperopt 未安装，无法使用 bayes 参数搜索")
+
         hp_dataset = lgb.Dataset(dev_data[var_names], dev_data[dep], silent=True)
 
         # 交叉验证
@@ -168,7 +257,20 @@ def auto_choose_params(datasets, var_names, dep, min_data, params_weight, early_
             params["lambda_l1"] = max(lambda_l1, 0)
             params["lambda_l2"] = max(lambda_l2, 0)
 
-            cv_result = lgb.cv(params, hp_dataset, nfold=3, seed=328, stratified=True, shuffle=True, verbose_eval=False, early_stopping_rounds=10, metrics="auc")
+            cv_result = lgb.cv(
+                params,
+                hp_dataset,
+                num_boost_round=num_iterations,
+                nfold=3,
+                seed=328,
+                stratified=True,
+                shuffle=True,
+                metrics="auc",
+                callbacks=[
+                    lgb.early_stopping(stopping_rounds=10, verbose=False),
+                    lgb.log_evaluation(period=0),
+                ],
+            )
             return -(min(cv_result["auc-mean"]))
 
         lgb_bo = BayesianOptimization(
@@ -203,7 +305,7 @@ def auto_choose_params(datasets, var_names, dep, min_data, params_weight, early_
 
         return params
 
-    model = lgb.train(params=params, verbose_eval=False, early_stopping_rounds=early_stopping_rounds, train_set=lgb.Dataset(dev_data[var_names], dev_data[dep]), valid_sets=lgb.Dataset(oot_data[var_names], oot_data[dep]))
+    model = _train_lgbm(params, lgb.Dataset(dev_data[var_names], dev_data[dep]), lgb.Dataset(oot_data[var_names], oot_data[dep]), early_stopping_rounds=early_stopping_rounds)
 
     devks = sloveKS(model, dev_data[var_names], dev_data[dep])
     ootks = sloveKS(model, oot_data[var_names], oot_data[dep])
@@ -264,7 +366,7 @@ def auto_delete_vars(datasets, var_names, dep, min_data, early_stopping_rounds, 
         "num_boost_round": params.get("num_boost_round", 100),
     }
 
-    model = lgb.train(params=delete_params, early_stopping_rounds=early_stopping_rounds, verbose_eval=False, train_set=lgb.Dataset(dev_data[var_names], dev_data[dep]), valid_sets=lgb.Dataset(oot_data[var_names], oot_data[dep]))
+    model = _train_lgbm(delete_params, lgb.Dataset(dev_data[var_names], dev_data[dep]), lgb.Dataset(oot_data[var_names], oot_data[dep]), early_stopping_rounds=early_stopping_rounds)
     ootks = sloveKS(model, oot_data[var_names], oot_data[dep])
     train_number, oldks, del_list = 0, ootks, list()
     logger.info("train_number: %s, ootks: %s" % (train_number, ootks))
@@ -273,7 +375,9 @@ def auto_delete_vars(datasets, var_names, dep, min_data, early_stopping_rounds, 
         flag = True
         for var_name in tqdm(var_names):
             names = [var for var in var_names if var_name != var]
-            model = lgb.train(params=params, early_stopping_rounds=early_stopping_rounds, verbose_eval=False, train_set=lgb.Dataset(dev_data[names], dev_data[dep]), valid_sets=lgb.Dataset(oot_data[names], oot_data[dep]))
+            if not names:
+                continue
+            model = _train_lgbm(params, lgb.Dataset(dev_data[names], dev_data[dep]), lgb.Dataset(oot_data[names], oot_data[dep]), early_stopping_rounds=early_stopping_rounds)
             train_number += 1
             ootks = sloveKS(model, oot_data[names], oot_data[dep])
             if ootks >= oldks:

@@ -5,6 +5,9 @@
 @Site    : itlubber.art
 """
 
+import sys
+from pathlib import Path
+
 from .utils.logger import logger
 from .model import auto_lightgbm, auto_logistic
 

@@ -13,13 +13,15 @@ import os
 import numpy as np
 import pandas as pd
 
-import toad
 import lightgbm as lgb
+from sklearn.model_selection import train_test_split
 from hscredit.core.models.classical.logistic_regression import LogisticRegression
+from hscredit.core.binning.optimal_binning import OptimalBinning
+from hscredit.core.encoders import WOEEncoder
 
 from .utils.logger import logger
 from .utils.metrics import solveIV, sloveKS, slovePSI
-from .utils.methods import feature_select, auto_choose_params, auto_delete_vars
+from .utils.methods import feature_select, auto_choose_params, auto_delete_vars, _train_lgbm
 
 
 class auto_lightgbm(object):
@@ -99,10 +101,11 @@ class auto_lightgbm(object):
             "bagging_freq": self.params.get("bagging_freq", 2),
             "verbose": self.params.get("verbose", -1),
             "num_boost_round": self.params.get("num_boost_round", 100),
+            "verbose": -1,
         }
 
         # base model
-        model = lgb.train(params=params, early_stopping_rounds=self.early_stopping_rounds, verbose_eval=False, train_set=lgb.Dataset(dev_data[var_names], dev_data[self.target]), valid_sets=lgb.Dataset(oot_data[var_names], oot_data[self.target]))
+        model = _train_lgbm(params, lgb.Dataset(dev_data[var_names], dev_data[self.target]), lgb.Dataset(oot_data[var_names], oot_data[self.target]), early_stopping_rounds=self.early_stopping_rounds)
 
         # 变量筛选
         if select_feature:
@@ -119,7 +122,7 @@ class auto_lightgbm(object):
             logger.info("-" * 50)
 
         # final model
-        model = lgb.train(params=params, early_stopping_rounds=self.early_stopping_rounds, verbose_eval=False, train_set=lgb.Dataset(dev_data[var_names], dev_data[self.target]), valid_sets=lgb.Dataset(oot_data[var_names], oot_data[self.target]))
+        model = _train_lgbm(params, lgb.Dataset(dev_data[var_names], dev_data[self.target]), lgb.Dataset(oot_data[var_names], oot_data[self.target]), early_stopping_rounds=self.early_stopping_rounds)
 
         # 计算KS和PSI
         devks = sloveKS(model, dev_data[var_names], dev_data[self.target])
@@ -133,17 +136,25 @@ class auto_lightgbm(object):
         return model, var_names
 
 
-def auto_logistic(data, target="target", params={}, early_stopping_rounds=10, importance=1e-4, corr=0.4, psi=0.5, test_size=0.25, seed=None, max_rounds=128, mertic="weight", balance_weight=0.2, C=1., class_weight=None, max_iter=128, **kwargs):
+def auto_logistic(data, target="target", params={}, early_stopping_rounds=10, importance=1e-4, corr=0.4, psi=0.5, test_size=0.25, seed=None, max_rounds=128, min_features=1, mertic="weight", select_type="shap", balance_weight=0.2, C=1., class_weight=None, max_iter=128, **kwargs):
     del_vars = []
+    last_logistic = None
+
+    data = data.copy().fillna(-1)
 
     dev, oot = train_test_split(data, test_size=test_size, random_state=seed, stratify=data[target])
 
     for i in range(max_rounds):
         if len(del_vars) < len(data.columns) - 1:
-            lgb_base = auto_lightgbm({"dev": dev.drop(columns=del_vars), "oot": oot.drop(columns=del_vars)}, params=params, early_stopping_rounds=early_stopping_rounds)
+            lgb_base = auto_lightgbm(
+                {"dev": dev.drop(columns=del_vars, errors="ignore"), "oot": oot.drop(columns=del_vars, errors="ignore")},
+                target=target,
+                params=params,
+                early_stopping_rounds=early_stopping_rounds,
+            )
             model, new_var_names = lgb_base.train(
                                                     select_feature=True,
-                                                    select_type='shap',
+                                                    select_type=select_type,
                                                     single_delete=True,
                                                     imp_threhold=importance,
                                                     corr_threhold=corr,
@@ -153,15 +164,33 @@ def auto_logistic(data, target="target", params={}, early_stopping_rounds=10, im
                                                 )
             
             logistic = LogisticRegression(target=target, class_weight=class_weight, C=C, max_iter=max_iter, **kwargs)
-            logistic.fit(data[new_var_names + [target]])
+            logistic.fit(WOEEncoder(target=target).fit_transform(OptimalBinning(method="mdlp", min_bin_size=0.05, max_n_bins=5, target=target).fit_transform(dev[new_var_names + [target]])))
             summary = logistic.summary()
 
-            if len(summary[summary["Coef."] < 0]) > 0:
-                del_vars.append(summary[summary["Coef."] < 0]["P>|z|"].idxmax())
+            logger.info(summary.to_markdown())
+
+            last_logistic = logistic
+
+            negative_summary = summary[(summary["Coef."] < 0) & (summary.index != "const")]
+            if len(negative_summary) > 0:
+                if len(new_var_names) <= min_features:
+                    logger.info(f"已达到最小保留特征数 {min_features}，停止继续删除特征")
+                    return logistic
+                del_vars.append(negative_summary["P>|z|"].idxmax())
             else:
-                return logistic
+                p_outer_summary = summary[(summary["P>|z|"] > 0.05) & (summary.index != "const")]
+                if len(p_outer_summary) > 0:
+                    del_vars.append(p_outer_summary["P>|z|"].idxmax())
+                else:
+                    return logistic
         else:
-            raise "自动逻辑回归建模失败"
+            break
+
+    if last_logistic is not None:
+        logger.info("达到最大轮次或最小特征限制，返回当前逻辑回归模型")
+        return last_logistic
+
+    raise RuntimeError("自动逻辑回归建模失败")
 
 
 if __name__ == "__main__":
